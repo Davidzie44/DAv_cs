@@ -47,15 +47,26 @@ private:
     bool CreateShaders() {
         // Vertex shader for 2D orthographic rendering
         const char* vsSource = R"(
-            float4 main(float2 position : POSITION, float4 color : COLOR) : SV_POSITION {
-                return float4(position, 0.0, 1.0);
+            struct VS_OUT {
+                float4 pos : SV_POSITION;
+                float4 col : COLOR;
+            };
+            VS_OUT main(float2 position : POSITION, float4 color : COLOR) {
+                VS_OUT output;
+                output.pos = float4(position, 0.0, 1.0);
+                output.col = color;
+                return output;
             }
         )";
         
         // Pixel shader (pass-through)
         const char* psSource = R"(
-            float4 main(float4 position : SV_POSITION, float4 color : COLOR) : SV_TARGET {
-                return color;
+            struct VS_OUT {
+                float4 pos : SV_POSITION;
+                float4 col : COLOR;
+            };
+            float4 main(VS_OUT input) : SV_TARGET {
+                return input.col;
             }
         )";
         
@@ -260,11 +271,14 @@ public:
     
     // Draw a filled rectangle
     void DrawFilledRect(float x, float y, float w, float h, const D3DXCOLOR& color) {
-        // Triangle strip for filled rectangle
+        // Triangle list for filled rectangle (6 vertices)
         AddFilledVertex(ScreenToClipX(x), ScreenToClipY(y), color);
+        AddFilledVertex(ScreenToClipX(x + w), ScreenToClipY(y), color);
         AddFilledVertex(ScreenToClipX(x), ScreenToClipY(y + h), color);
+        
         AddFilledVertex(ScreenToClipX(x + w), ScreenToClipY(y), color);
         AddFilledVertex(ScreenToClipX(x + w), ScreenToClipY(y + h), color);
+        AddFilledVertex(ScreenToClipX(x), ScreenToClipY(y + h), color);
     }
     
     // Draw a circle
@@ -300,11 +314,14 @@ public:
                 float x2_inner = centerX + std::cos(angle2) * (radius - thickness);
                 float y2_inner = centerY + std::sin(angle2) * (radius - thickness);
                 
-                // Draw quad for each segment
+                // Draw two triangles for each thick segment quad
                 AddFilledVertex(ScreenToClipX(x1_inner), ScreenToClipY(y1_inner), color);
                 AddFilledVertex(ScreenToClipX(x1), ScreenToClipY(y1), color);
                 AddFilledVertex(ScreenToClipX(x2_inner), ScreenToClipY(y2_inner), color);
+                
+                AddFilledVertex(ScreenToClipX(x1), ScreenToClipY(y1), color);
                 AddFilledVertex(ScreenToClipX(x2), ScreenToClipY(y2), color);
+                AddFilledVertex(ScreenToClipX(x2_inner), ScreenToClipY(y2_inner), color);
             }
         }
     }
@@ -433,7 +450,7 @@ public:
         
         // Draw filled geometry
         if (!filledVertices.empty()) {
-            context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             
             D3D11_MAPPED_SUBRESOURCE ms;
             if (SUCCEEDED(context->Map(vertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {

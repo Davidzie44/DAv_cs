@@ -131,18 +131,16 @@ HWND CreateOverlayWindow(int x, int y, int w, int h) {
     RegisterClassExW(&wc);
 
     HWND hwnd = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+        WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         L"CS2Overlay", L"CS2 Tool", WS_POPUP,
         x, y, w, h,
         nullptr, nullptr, GetModuleHandle(nullptr), nullptr
     );
 
-    MARGINS margins = {-1, -1, -1, -1};
+    MARGINS margins = {-1, 0, 0, 0};
     DwmExtendFrameIntoClientArea(hwnd, &margins);
-    
-    SetWindowLong(hwnd, GWL_EXSTYLE, GetWindowLong(hwnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT | WS_EX_LAYERED);
 
-    ShowWindow(hwnd, SW_SHOW);
+    ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
 
     char msg[256];
@@ -472,6 +470,8 @@ int main() {
             if (!insertPressed) {
                 menuOpen = !menuOpen;
                 insertPressed = true;
+                if (menuOpen) Log("Menu opened");
+                else Log("Menu closed");
             }
         } else {
             insertPressed = false;
