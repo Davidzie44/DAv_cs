@@ -170,7 +170,7 @@ HWND CreateOverlayWindow(HWND targetWindow) {
     wc.lpfnWndProc = DefWindowProcW;
     wc.hInstance = GetModuleHandle(nullptr);
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    wc.hbrBackground = NULL;
     wc.lpszClassName = L"CS2Overlay";
     
     RegisterClassExW(&wc);
@@ -182,10 +182,11 @@ HWND CreateOverlayWindow(HWND targetWindow) {
         nullptr, nullptr, GetModuleHandle(nullptr), nullptr
     );
     
-    // Use color key: black pixels become fully transparent
     SetLayeredWindowAttributes(hwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
     
-    ShowWindow(hwnd, SW_SHOWNA);
+    SetWindowLong(hwnd, GWL_EXSTYLE, GetWindowLong(hwnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT | WS_EX_LAYERED);
+    
+    ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
     
     char overlayMsg[256];
@@ -198,9 +199,6 @@ HWND CreateOverlayWindow(HWND targetWindow) {
 void RenderThread(HWND overlayWindow, HWND targetWindow, 
                   ProcessMemory* process, EntityManager* entityManager,
                   WorldToScreen* worldToScreen, AimbotAdvanced* aimbot) {
-    // Wait for overlay window to be fully created
-    Sleep(200);
-    
     // Get overlay window size
     RECT overlayRect = {};
     GetWindowRect(overlayWindow, &overlayRect);
@@ -299,7 +297,7 @@ void RenderThread(HWND overlayWindow, HWND targetWindow,
         bool cs2Active = IsCS2Foreground(targetWindow);
         if (cs2Active) {
             // Show overlay (position is already correct from CreateOverlayWindow for fullscreen)
-            ShowWindow(overlayWindow, SW_SHOWNA);
+            ShowWindow(overlayWindow, SW_SHOW);
         } else {
             // Hide overlay when CS2 is not focused
             ShowWindow(overlayWindow, SW_HIDE);
@@ -334,8 +332,8 @@ void RenderThread(HWND overlayWindow, HWND targetWindow,
         aimbot->SetSettings(aimSettings);
         
         if (cs2Active) {
-            // Clear screen - black becomes transparent via color key
-            float clearColor[4] = {0, 0, 0, 1};
+            // Clear screen - transparent (alpha 0)
+            float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             context->ClearRenderTargetView(renderTargetView, clearColor);
             
             // Update entity data
