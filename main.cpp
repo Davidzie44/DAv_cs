@@ -10,6 +10,8 @@
 #include <cmath>
 #include <fstream>
 #include <exception>
+#include <cstdio>
+#include <cstdarg>
 
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -214,8 +216,18 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
     g_cs2ProcessId = cs2ProcessId;
 
     bool prevInsert = false;
+    int frameCount = 0;
+
+    Log("RenderThread: Entering render loop");
 
     while (running) {
+        frameCount++;
+        if (frameCount <= 3 || frameCount % 300 == 0) {
+            LogFmt("RenderThread: Frame %d start", frameCount);
+        }
+
+        try {
+
         MSG msg;
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) { running = false; break; }
@@ -264,10 +276,18 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
             ShowWindow(overlayWindow, SW_HIDE);
         }
 
+        if (frameCount <= 3 || frameCount % 300 == 0) {
+            LogFmt("  Frame %d: calling entityManager->Update()", frameCount);
+        }
+
         // Update entity data
         {
             std::lock_guard<std::mutex> lock(dataMutex);
             entityManager->Update();
+        }
+
+        if (frameCount <= 3 || frameCount % 300 == 0) {
+            LogFmt("  Frame %d: calling ImGui new frame", frameCount);
         }
 
         // ImGui new frame
@@ -391,6 +411,14 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
         context->ClearRenderTargetView(rtv, clearColor);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         swapChain->Present(1, 0);
+
+        } catch (const std::exception& e) {
+            LogFmt("C++ EXCEPTION in render loop: %s", e.what());
+            break;
+        } catch (...) {
+            LogFmt("UNKNOWN EXCEPTION in render loop at frame %d", frameCount);
+            break;
+        }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
