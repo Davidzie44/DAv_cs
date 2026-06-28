@@ -7,6 +7,11 @@
 #include <string>
 #include <algorithm>
 #include <cstdint>
+#include <fstream>
+
+extern std::ofstream g_log;
+void Log(const char* msg);
+void LogFmt(const char* fmt, ...);
 
 struct PlayerData {
     int index;
@@ -33,42 +38,26 @@ private:
     PlayerData localPlayer;
     uintptr_t entityListBase;
 
-    uintptr_t ResolveController(int index) {
-        if (entityListBase == 0) return 0;
+    uintptr_t ReadEntityFromList(int entityIndex) {
+        if (entityListBase == 0 || entityIndex < 0 || entityIndex > 2047) return 0;
         try {
-            return process.ReadMemory<uintptr_t>(
-                entityListBase + 0x10 + ((uintptr_t)(index + 1)) * 0x70
-            );
+            uint32_t pageIndex = entityIndex >> 9;
+            uint32_t pageOffset = entityIndex & 0x1FF;
+            uintptr_t pageAddr = entityListBase + 0x10 + (uintptr_t)pageIndex * 8;
+            uintptr_t pagePtr = process.ReadMemory<uintptr_t>(pageAddr);
+            if (pagePtr == 0) return 0;
+            return process.ReadMemory<uintptr_t>(pagePtr + (uintptr_t)pageOffset * 0x70);
         } catch (...) { return 0; }
+    }
+
+    uintptr_t ResolveController(int index) {
+        return ReadEntityFromList(index + 1);
     }
 
     uintptr_t ResolvePawnFromHandle(uint32_t handle) {
         if (handle == 0 || handle == 0xFFFFFFFF || entityListBase == 0) return 0;
-        try {
-            uint32_t index = handle & 0x7FFF;
-            uintptr_t listPage = process.ReadMemory<uintptr_t>(
-                entityListBase + 0x10 + (uintptr_t)(index >> 9) * 8
-            );
-            if (listPage == 0) return 0;
-            return process.ReadMemory<uintptr_t>(
-                listPage + (uintptr_t)(index & 0x1FF) * 0x70
-            );
-        } catch (...) { return 0; }
-    }
-
-    uintptr_t ResolveEntityByIndex(int index) {
-        if (entityListBase == 0 || index < 0 || index > 2047) return 0;
-        try {
-            uint32_t pageIndex = index >> 9;
-            uint32_t pageOffset = index & 0x1FF;
-            uintptr_t listEntry = process.ReadMemory<uintptr_t>(
-                entityListBase + (uintptr_t)pageOffset * 0x10 + 0x10
-            );
-            if (listEntry == 0) return 0;
-            return process.ReadMemory<uintptr_t>(
-                listEntry + (uintptr_t)pageIndex * 0x70
-            );
-        } catch (...) { return 0; }
+        uint32_t index = handle & 0x7FFF;
+        return ReadEntityFromList(index);
     }
 
     std::string GetPlayerName(uintptr_t controllerAddr) {
@@ -115,80 +104,152 @@ public:
     void Update() {
         players.clear();
 
-        entityListBase = process.ReadMemory<uintptr_t>(
-            process.GetClientDllBase() + Offsets::client_dll::dwEntityList
-        );
-        if (entityListBase == 0) return;
+        uintptr_t clientBase = process.GetClientDllBase();
+        uintptr_t engineBase = process.GetEngine2DllBase();
 
-        uintptr_t localControllerAddr = process.ReadMemory<uintptr_t>(
-            process.GetClientDllBase() + Offsets::client_dll::dwLocalPlayerController
-        );
-        uint32_t localPawnHandle = 0;
-        if (localControllerAddr != 0) {
-            localPawnHandle = process.ReadMemory<uint32_t>(
-                localControllerAddr + Offsets::schema::m_hPlayerPawn
-            );
-        }
-        uintptr_t localPawnAddr = ResolvePawnFromHandle(localPawnHandle);
+        // Read build number for offset verification
+        static bool loggedOffsets = false;
+        if (!loggedOffsets) {
+            try {
+                uint32_t buildNum = process.ReadMemory<uint32_t>(engineBase + Offsets::engine2_dll::dwBuildNumber);
+                LogFmt("EntityManager: CS2 Build=%u", buildNum);
 
-        if (localPawnAddr != 0) {
-            int health = process.ReadMemory<int>(localPawnAddr + Offsets::schema::m_iHealth);
-            int team = process.ReadMemory<int>(localPawnAddr + Offsets::schema::m_iTeamNum);
-            localPlayer.index = -1;
-            localPlayer.health = health;
-            localPlayer.team = team;
-            localPlayer.armor = process.ReadMemory<int>(localPawnAddr + Offsets::schema::m_ArmorValue);
-            localPlayer.position = ReadPositionFromPawn(localPawnAddr);
-            localPlayer.headPosition = Vector3(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z + 64.0f);
-            localPlayer.isAlive = health > 0;
-            localPlayer.isDormant = false;
-            localPlayer.pawnAddr = localPawnAddr;
-            localPlayer.controllerAddr = localControllerAddr;
-            localPlayer.entityIndex = -1;
-            localPlayer.flashAlpha = 0;
-            localPlayer.distance = 0;
-            localPlayer.name = "Local Player";
-            if (localControllerAddr != 0) {
-                localPlayer.name = GetPlayerName(localControllerAddr);
+                uintptr_t elRaw = process.ReadMemory<uintptr_t>(clientBase + Offsets::client_dll::dwEntityList);
+                LogFmt("EntityManager: dwEntityList ptr=0x%llX", (unsigned long long)elRaw);
+
+                uintptr_t ctrlRaw = process.ReadMemory<uintptr_t>(clientBase + Offsets::client_dll::dwLocalPlayerController);
+                LogFmt("EntityManager: dwLocalPlayerController ptr=0x%llX", (unsigned long long)ctrlRaw);
+
+                uintptr_t pawnRaw = process.ReadMemory<uintptr_t>(clientBase + Offsets::client_dll::dwLocalPlayerPawn);
+                LogFmt("EntityManager: dwLocalPlayerPawn ptr=0x%llX", (unsigned long long)pawnRaw);
+
+                uintptr_t viewMatRaw = process.ReadMemory<uintptr_t>(clientBase + Offsets::client_dll::dwViewMatrix);
+                LogFmt("EntityManager: dwViewMatrix ptr=0x%llX", (unsigned long long)viewMatRaw);
+
+                // Dump first few entity list entries
+                if (elRaw != 0) {
+                    for (int i = 0; i < 5; i++) {
+                        uintptr_t slotAddr = elRaw + 0x10 + (uintptr_t)i * 0x10;
+                        uintptr_t slotVal = 0;
+                        try { slotVal = process.ReadMemory<uintptr_t>(slotAddr); } catch (...) {}
+                        LogFmt("  EL slot[%d] at 0x%llX = 0x%llX", i, (unsigned long long)slotAddr, (unsigned long long)slotVal);
+                    }
+                }
+
+                loggedOffsets = true;
+            } catch (...) {
+                Log("EntityManager: Failed to read offset verification data");
+                loggedOffsets = true;
             }
         }
 
+        entityListBase = process.ReadMemory<uintptr_t>(clientBase + Offsets::client_dll::dwEntityList);
+        if (entityListBase == 0) {
+            Log("EntityManager: entityListBase is 0!");
+            return;
+        }
+
+        uintptr_t localControllerAddr = process.ReadMemory<uintptr_t>(
+            clientBase + Offsets::client_dll::dwLocalPlayerController
+        );
+        if (localControllerAddr == 0) {
+            Log("EntityManager: localControllerAddr is 0!");
+            return;
+        }
+
+        uint32_t localPawnHandle = process.ReadMemory<uint32_t>(
+            localControllerAddr + Offsets::schema::m_hPlayerPawn
+        );
+        if (localPawnHandle == 0 || localPawnHandle == 0xFFFFFFFF) {
+            LogFmt("EntityManager: localPawnHandle invalid: 0x%08X", localPawnHandle);
+            return;
+        }
+
+        uintptr_t localPawnAddr = ResolvePawnFromHandle(localPawnHandle);
+        if (localPawnAddr == 0) {
+            LogFmt("EntityManager: localPawnAddr is 0! handle=0x%08X", localPawnHandle);
+            return;
+        }
+
+        int health = process.ReadMemory<int>(localPawnAddr + Offsets::schema::m_iHealth);
+        int team = process.ReadMemory<int>(localPawnAddr + Offsets::schema::m_iTeamNum);
+        localPlayer.index = -1;
+        localPlayer.health = health;
+        localPlayer.team = team;
+        localPlayer.armor = process.ReadMemory<int>(localPawnAddr + Offsets::schema::m_ArmorValue);
+        localPlayer.position = ReadPositionFromPawn(localPawnAddr);
+        localPlayer.headPosition = Vector3(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z + 64.0f);
+        localPlayer.isAlive = health > 0;
+        localPlayer.isDormant = false;
+        localPlayer.pawnAddr = localPawnAddr;
+        localPlayer.controllerAddr = localControllerAddr;
+        localPlayer.entityIndex = -1;
+        localPlayer.flashAlpha = 0;
+        localPlayer.distance = 0;
+        localPlayer.name = "Local Player";
+        if (localControllerAddr != 0) {
+            localPlayer.name = GetPlayerName(localControllerAddr);
+        }
+
+        static int logCounter = 0;
+        logCounter++;
+        if (logCounter <= 5 || logCounter % 300 == 0) {
+            LogFmt("  EntityManager: localPawn=0x%llX ctrl=0x%llX hp=%d team=%d pos=(%.1f,%.1f,%.1f) elBase=0x%llX",
+                (unsigned long long)localPawnAddr, (unsigned long long)localControllerAddr,
+                health, team, localPlayer.position.x, localPlayer.position.y, localPlayer.position.z,
+                (unsigned long long)entityListBase);
+        }
+
+        int foundCount = 0;
+        int validCount = 0;
+        int failHandle = 0, failPawn = 0, failLocal = 0, failHealth = 0, failTeam = 0, failPos = 0, failRead = 0;
         for (int i = 0; i < 64; i++) {
             uintptr_t controller = ResolveController(i);
             if (controller == 0) continue;
+            foundCount++;
 
             uint32_t pawnHandle = 0;
             try {
                 pawnHandle = process.ReadMemory<uint32_t>(controller + Offsets::schema::m_hPlayerPawn);
-            } catch (...) { continue; }
-            if (pawnHandle == 0 || pawnHandle == 0xFFFFFFFF) continue;
+            } catch (...) { failRead++; continue; }
+            if (pawnHandle == 0 || pawnHandle == 0xFFFFFFFF) { failHandle++; continue; }
 
             uintptr_t pawn = ResolvePawnFromHandle(pawnHandle);
-            if (pawn == 0) continue;
-            if (pawn == localPawnAddr) continue;
+            if (pawn == 0) {
+                failPawn++;
+                if (logCounter <= 3) {
+                    uint32_t idx = pawnHandle & 0x7FFF;
+                    uintptr_t pageAddr = entityListBase + 0x10 + (uintptr_t)(idx >> 9) * 0x10;
+                    uintptr_t pageVal = 0;
+                    try { pageVal = process.ReadMemory<uintptr_t>(pageAddr); } catch (...) {}
+                    LogFmt("    PAWN_FAIL[%d]: handle=0x%08X idx=%u pageAddr=0x%llX pageVal=0x%llX",
+                        i, pawnHandle, idx, (unsigned long long)pageAddr, (unsigned long long)pageVal);
+                }
+                continue;
+            }
+            if (pawn == localPawnAddr) { failLocal++; continue; }
 
-            int health = 0;
-            int team = 0;
+            int hp = 0;
+            int tm = 0;
             try {
-                health = process.ReadMemory<int>(pawn + Offsets::schema::m_iHealth);
-                team = process.ReadMemory<int>(pawn + Offsets::schema::m_iTeamNum);
-            } catch (...) { continue; }
+                hp = process.ReadMemory<int>(pawn + Offsets::schema::m_iHealth);
+                tm = process.ReadMemory<int>(pawn + Offsets::schema::m_iTeamNum);
+            } catch (...) { failRead++; continue; }
 
-            if (health <= 0 || health > 200) continue;
-            if (team != 2 && team != 3) continue;
+            if (hp <= 0 || hp > 200) { failHealth++; continue; }
+            if (tm != 2 && tm != 3) { failTeam++; continue; }
 
             Vector3 position = ReadPositionFromPawn(pawn);
-            if (position.Length() < 1.0f) continue;
 
             float distance = 0;
-            if (localPlayer.pawnAddr != 0 && localPlayer.position.Length() > 1.0f) {
+            if (localPlayer.position.Length() > 1.0f) {
                 distance = localPlayer.position.Distance(position);
             }
 
-            PlayerData data;
+            PlayerData data{};
             data.index = i;
-            data.health = health;
-            data.team = team;
+            data.health = hp;
+            data.team = tm;
             data.armor = 0;
             data.position = position;
             data.headPosition = Vector3(position.x, position.y, position.z + 64.0f);
@@ -203,6 +264,21 @@ public:
             data.isDefusing = false;
 
             players.push_back(data);
+            validCount++;
+
+            if (logCounter <= 5 || logCounter % 300 == 0) {
+                LogFmt("    Player[%d]: hp=%d team=%d pos=(%.0f,%.0f,%.0f) dist=%.0f name=%s",
+                    i, hp, tm, position.x, position.y, position.z, distance, data.name.c_str());
+            }
+        }
+
+        if (logCounter <= 5 || logCounter % 300 == 0) {
+            LogFmt("  EntityManager: found=%d valid=%d handleFail=%d pawnFail=%d localFail=%d healthFail=%d teamFail=%d readFail=%d",
+                foundCount, validCount, failHandle, failPawn, failLocal, failHealth, failTeam, failRead);
+        }
+
+        if (logCounter <= 5 || logCounter % 300 == 0) {
+            LogFmt("  EntityManager: found=%d valid=%d totalPlayers=%d", foundCount, validCount, (int)players.size());
         }
     }
 

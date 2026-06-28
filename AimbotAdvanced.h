@@ -9,6 +9,9 @@
 #include <algorithm>
 #include <windows.h>
 
+extern std::ofstream g_log;
+void LogFmt(const char* fmt, ...);
+
 enum class AimBone {
     HEAD = 0,
     NECK = 1,
@@ -133,13 +136,19 @@ private:
     Vector2 GetLocalAimPunch() const {
         Entity localPawn = entityManager.GetLocalPawn();
         if (!localPawn.IsValid()) return Vector2(0, 0);
-        return localPawn.GetAimPunch();
+        try {
+            float x = process.ReadMemory<float>(localPawn.GetAddress() + Offsets::schema::m_aimPunchAngle);
+            float y = process.ReadMemory<float>(localPawn.GetAddress() + Offsets::schema::m_aimPunchAngle + 0x4);
+            return Vector2(x, y);
+        } catch (...) { return Vector2(0, 0); }
     }
 
     bool IsShooting() const {
         Entity localPawn = entityManager.GetLocalPawn();
         if (!localPawn.IsValid()) return false;
-        return localPawn.GetShotsFired() > 0;
+        try {
+            return process.ReadMemory<int>(localPawn.GetAddress() + Offsets::schema::m_iShotsFired) > 0;
+        } catch (...) { return false; }
     }
 
     uintptr_t ResolveEntityByIndex(int entityIndex) {
@@ -150,11 +159,11 @@ private:
         try {
             uint32_t pageIndex = entityIndex >> 9;
             uint32_t pageOffset = entityIndex & 0x1FF;
-            uintptr_t listEntry = process.ReadMemory<uintptr_t>(
-                elBase + (uintptr_t)pageOffset * 0x10 + 0x10
+            uintptr_t pagePtr = process.ReadMemory<uintptr_t>(
+                elBase + 0x10 + (uintptr_t)pageIndex * 8
             );
-            if (listEntry == 0) return 0;
-            return process.ReadMemory<uintptr_t>(listEntry + (uintptr_t)pageIndex * 0x70);
+            if (pagePtr == 0) return 0;
+            return process.ReadMemory<uintptr_t>(pagePtr + (uintptr_t)pageOffset * 0x70);
         } catch (...) { return 0; }
     }
 
@@ -194,40 +203,51 @@ public:
         auto targets = entityManager.GetValidTargets();
         if (targets.empty()) { hasTarget = false; return; }
 
-        PlayerData bestTarget;
-        float bestScore = settings.fov;
-        bool foundTarget = false;
-
-        for (const auto& target : targets) {
-            Vector3 targetPos = GetTargetPosition(target);
-            ViewAngles targetAngles = CalculateAimAngles(cameraPos, targetPos);
-            float fov = CalculateFOV(currentAngles, targetAngles);
-            if (fov > settings.fov) continue;
-
-            float score = (settings.targetPriority == 0) ? fov : target.distance;
-            if (score < bestScore) {
-                bestScore = score;
-                bestTarget = target;
-                foundTarget = true;
-            }
-        }
-
-        if (settings.targetLock && hasTarget && foundTarget) {
+        // If we have a locked target, check if it's still valid
+        if (settings.targetLock && hasTarget) {
             bool stillValid = false;
             for (const auto& t : targets) {
                 if (t.pawnAddr == currentTarget.pawnAddr) {
-                    currentTarget = t;
-                    stillValid = true;
+                    if (t.isAlive && t.health > 0) {
+                        currentTarget = t;
+                        stillValid = true;
+                    }
                     break;
                 }
             }
-            if (!stillValid) { hasTarget = false; }
-        } else if (foundTarget) {
-            currentTarget = bestTarget;
-            hasTarget = true;
-        } else {
-            hasTarget = false;
-            return;
+            if (!stillValid) {
+                hasTarget = false;
+            }
+        }
+
+        // Find new target if we don't have one
+        if (!hasTarget) {
+            PlayerData bestTarget;
+            float bestScore = settings.fov;
+            bool foundTarget = false;
+
+            for (const auto& target : targets) {
+                if (target.isDormant) continue;
+
+                Vector3 targetPos = GetTargetPosition(target);
+                ViewAngles targetAngles = CalculateAimAngles(cameraPos, targetPos);
+                float fov = CalculateFOV(currentAngles, targetAngles);
+                if (fov > settings.fov) continue;
+
+                float score = (settings.targetPriority == 0) ? fov : target.distance;
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestTarget = target;
+                    foundTarget = true;
+                }
+            }
+
+            if (foundTarget) {
+                currentTarget = bestTarget;
+                hasTarget = true;
+            } else {
+                return;
+            }
         }
 
         if (!hasTarget) return;
@@ -260,10 +280,10 @@ public:
             uintptr_t entityAddr = ResolveEntityByIndex(crosshairEntIdx);
             if (entityAddr == 0) return;
 
-            int health = process.ReadMemory<int>(entityAddr + Offsets::schema::m_iHealth);
-            int team = process.ReadMemory<int>(entityAddr + Offsets::schema::m_iTeamNum);
-            if (health <= 0 || health > 200) return;
-            if (team == localPlayer.team) return;
+            int hp = process.ReadMemory<int>(entityAddr + Offsets::schema::m_iHealth);
+            int tm = process.ReadMemory<int>(entityAddr + Offsets::schema::m_iTeamNum);
+            if (hp <= 0 || hp > 200) return;
+            if (tm == localPlayer.team) return;
 
             SendMouseDown();
             Sleep(16);

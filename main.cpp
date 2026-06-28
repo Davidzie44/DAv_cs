@@ -117,7 +117,7 @@ CS2WindowRect GetCS2ClientRect(HWND cs2Hwnd) {
 }
 
 // Settings
-bool espEnabled = false;
+bool espEnabled = true;
 bool espBoxes = true;
 bool espHealth = true;
 bool espName = true;
@@ -127,13 +127,13 @@ bool espSnaplines = true;
 bool espHeadDot = true;
 bool espShowTeammates = false;
 
-bool aimbotEnabled = false;
+bool aimbotEnabled = true;
 float aimbotSmoothing = 1.0f;
 float aimbotFOV = 30.0f;
 float aimbotRCS = 2.0f;
 int aimbotBone = 0;
 bool aimbotVisibilityCheck = false;
-bool aimbotTargetLock = false;
+bool aimbotTargetLock = true;
 int aimKey = VK_RBUTTON;
 
 bool triggerbotEnabled = false;
@@ -298,10 +298,17 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
         ImGui::NewFrame();
 
         // --- Draw ESP ---
+        const PlayerData& localPlayer = entityManager->GetLocalPlayer();
+        if (frameCount <= 5 || frameCount % 300 == 0) {
+            LogFmt("  ESP: local alive=%d team=%d hp=%d pos=(%.0f,%.0f,%.0f) players=%d esp=%d aimbot=%d",
+                localPlayer.isAlive, localPlayer.team, localPlayer.health,
+                localPlayer.position.x, localPlayer.position.y, localPlayer.position.z,
+                (int)entityManager->GetAllPlayers().size(), espEnabled, aimbotEnabled);
+        }
+
         if (espEnabled) {
             ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 
-            // Draw FOV circle
             if (aimbotEnabled) {
                 float centerX = overlayWidth / 2.0f;
                 float centerY = overlayHeight / 2.0f;
@@ -310,13 +317,6 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
                 drawList->AddCircle(ImVec2(centerX, centerY), fovRadius, IM_COL32(255, 255, 255, 120), 64, 1.5f);
             }
 
-            const PlayerData& localPlayer = entityManager->GetLocalPlayer();
-            if (frameCount <= 3 || frameCount % 300 == 0) {
-                LogFmt("  ESP: local alive=%d team=%d hp=%d pos=(%.0f,%.0f,%.0f) players=%d",
-                    localPlayer.isAlive, localPlayer.team, localPlayer.health,
-                    localPlayer.position.x, localPlayer.position.y, localPlayer.position.z,
-                    (int)entityManager->GetAllPlayers().size());
-            }
             if (localPlayer.isAlive) {
                 auto players = entityManager->GetAllPlayers();
                 for (const auto& player : players) {
@@ -441,10 +441,10 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
         aimSettings.rapidFireSpeed = rapidFireSpeed;
         aimbot->SetSettings(aimSettings);
 
-        // Run aimbot when aim key is held (right mouse button)
-        if (aimbotEnabled && (GetAsyncKeyState(aimKey) & 0x8000)) {
+        // Run aimbot when enabled (auto-aim, no key needed)
+        if (aimbotEnabled) {
             aimbot->Aim();
-        } else if (!aimbotTargetLock) {
+        } else {
             aimbot->ResetTarget();
         }
 
