@@ -8,6 +8,8 @@
 #include <chrono>
 #include <mutex>
 #include <cmath>
+#include <fstream>
+#include <exception>
 
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -26,8 +28,36 @@
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+std::ofstream g_log;
 std::atomic<bool> running(true);
 std::atomic<bool> menuOpen(false);
+
+void Log(const char* msg) {
+    if (g_log.is_open()) {
+        g_log << msg << std::endl;
+        g_log.flush();
+    }
+}
+
+void LogFmt(const char* fmt, ...) {
+    char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    Log(buf);
+}
+
+LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ep) {
+    LogFmt("CRASH: Exception code 0x%08X at address %p",
+        ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress);
+    if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+        LogFmt("  Access violation: reading/writing address %p",
+            (void*)ep->ExceptionRecord->ExceptionInformation[1]);
+    }
+    g_log.flush();
+    return EXCEPTION_EXECUTE_HANDLER;
+}
 std::mutex dataMutex;
 
 DWORD g_cs2ProcessId = 0;
@@ -121,8 +151,10 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
                   ProcessMemory* process, EntityManager* entityManager,
                   WorldToScreen* worldToScreen, AimbotAdvanced* aimbot) {
 
+    Log("RenderThread: Starting");
     HWND cs2Hwnd = FindCS2Window();
     if (!cs2Hwnd) {
+        Log("RenderThread: FATAL - CS2 window gone");
         running = false;
         return;
     }
@@ -130,8 +162,10 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
     CS2WindowRect cs2Rect = GetCS2ClientRect(cs2Hwnd);
     int overlayWidth = cs2Rect.w;
     int overlayHeight = cs2Rect.h;
+    LogFmt("RenderThread: CS2 client %dx%d", overlayWidth, overlayHeight);
 
     // D3D11 setup
+    Log("RenderThread: Creating D3D11 device and swap chain");
     DXGI_SWAP_CHAIN_DESC scd = {};
     scd.BufferCount = 2;
     scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -152,16 +186,20 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
     HRESULT hr = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
         featureLevels, 2, D3D11_SDK_VERSION, &scd, &swapChain, &device, &featureLevel, &context);
     if (FAILED(hr)) {
+        LogFmt("RenderThread: FATAL - D3D11CreateDeviceAndSwapChain failed: 0x%08X", (unsigned)hr);
         running = false;
         return;
     }
+    LogFmt("RenderThread: D3D11 device created, feature level=%u", (unsigned)featureLevel);
 
     ID3D11Texture2D* backBuffer = nullptr;
     swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
     device->CreateRenderTargetView(backBuffer, nullptr, &rtv);
     backBuffer->Release();
+    Log("RenderThread: Render target view created");
 
     // ImGui init
+    Log("RenderThread: Initializing ImGui");
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -171,6 +209,7 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
 
     ImGui_ImplWin32_Init(overlayWindow);
     ImGui_ImplDX11_Init(device, context);
+    Log("RenderThread: ImGui initialized OK");
 
     g_cs2ProcessId = cs2ProcessId;
 
@@ -367,17 +406,30 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
 }
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    SetUnhandledExceptionFilter(CrashHandler);
+
+    g_log.open("crash.log", std::ios::out);
+    Log("=== CS2 External Tool Starting ===");
+    Log("Step 1: ProcessMemory attach");
+
     ProcessMemory process;
     try {
         process.Attach(L"cs2.exe");
-    } catch (const std::exception&) {
-        MessageBoxW(nullptr, L"Failed to attach to cs2.exe.\nLaunch CS2 first.", L"Error", MB_ICONERROR | MB_OK);
+        Log("Attached to cs2.exe OK");
+    } catch (const std::exception& e) {
+        LogFmt("FATAL: Attach failed: %s", e.what());
+        MessageBoxA(nullptr, "Failed to attach to cs2.exe. See crash.log", "Error", MB_ICONERROR);
         return 1;
     }
 
+    Log("Step 2: Find cs2.exe PID");
     DWORD cs2Pid = 0;
     {
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap == INVALID_HANDLE_VALUE) {
+            Log("FATAL: CreateToolhelp32Snapshot failed");
+            return 1;
+        }
         PROCESSENTRY32W pe = { sizeof(pe) };
         if (Process32FirstW(snap, &pe)) {
             do {
@@ -390,48 +442,74 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         CloseHandle(snap);
     }
     if (!cs2Pid) {
-        MessageBoxW(nullptr, L"cs2.exe not found.", L"Error", MB_ICONERROR | MB_OK);
+        Log("FATAL: cs2.exe PID not found");
+        MessageBoxA(nullptr, "cs2.exe not found. See crash.log", "Error", MB_ICONERROR);
         return 1;
     }
+    LogFmt("cs2.exe PID = %lu", cs2Pid);
     g_cs2ProcessId = cs2Pid;
 
+    Log("Step 3: Find CS2 window (EnumWindows)");
     HWND cs2Hwnd = NULL;
     for (int i = 0; i < 30 && !cs2Hwnd; i++) {
         cs2Hwnd = FindCS2Window();
-        if (!cs2Hwnd) std::this_thread::sleep_for(std::chrono::seconds(1));
+        if (!cs2Hwnd) {
+            LogFmt("  Attempt %d/30 - no window yet", i + 1);
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
     }
     if (!cs2Hwnd) {
-        MessageBoxW(nullptr, L"Failed to find CS2 window.", L"Error", MB_ICONERROR | MB_OK);
+        Log("FATAL: CS2 window not found after 30 attempts");
+        MessageBoxA(nullptr, "Failed to find CS2 window. See crash.log", "Error", MB_ICONERROR);
+        return 1;
+    }
+    LogFmt("CS2 HWND = %p", (void*)cs2Hwnd);
+
+    CS2WindowRect cs2Rect = GetCS2ClientRect(cs2Hwnd);
+    LogFmt("CS2 client area: (%d, %d) %dx%d", cs2Rect.x, cs2Rect.y, cs2Rect.w, cs2Rect.h);
+
+    Log("Step 4: Register window class");
+    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, OverlayWndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, L"CS2Overlay", NULL };
+    ATOM atom = RegisterClassExW(&wc);
+    if (!atom) {
+        LogFmt("FATAL: RegisterClassExW failed, GetLastError=%lu", GetLastError());
         return 1;
     }
 
-    CS2WindowRect cs2Rect = GetCS2ClientRect(cs2Hwnd);
-
-    // Create overlay window - EXACT pattern from working projects
-    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, OverlayWndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, L"CS2Overlay", NULL };
-    RegisterClassExW(&wc);
-
+    Log("Step 5: Create overlay window");
     HWND overlayWindow = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED,
         L"CS2Overlay", L"CS2 Tool", WS_POPUP,
         cs2Rect.x, cs2Rect.y, cs2Rect.w, cs2Rect.h,
         nullptr, nullptr, GetModuleHandle(NULL), nullptr
     );
+    if (!overlayWindow) {
+        LogFmt("FATAL: CreateWindowExW failed, GetLastError=%lu", GetLastError());
+        return 1;
+    }
+    LogFmt("Overlay HWND = %p", (void*)overlayWindow);
 
+    Log("Step 6: SetLayeredWindowAttributes + DwmExtendFrameIntoClientArea");
     SetLayeredWindowAttributes(overlayWindow, RGB(0, 0, 0), 0, LWA_COLORKEY);
     MARGINS m = { -1, -1, -1, -1 };
     DwmExtendFrameIntoClientArea(overlayWindow, &m);
+
+    Log("Step 7: ShowWindow + UpdateWindow");
     ShowWindow(overlayWindow, SW_SHOWDEFAULT);
     UpdateWindow(overlayWindow);
 
+    Log("Step 8: Create EntityManager, WorldToScreen, AimbotAdvanced");
     EntityManager entityManager(process);
     WorldToScreen worldToScreen(process, cs2Rect.w, cs2Rect.h);
     AimbotAdvanced aimbot(process, worldToScreen, entityManager);
+    Log("All components created OK");
 
+    Log("Step 9: Start render thread");
     std::thread renderThread(RenderThread, overlayWindow, cs2Pid,
         &process, &entityManager, &worldToScreen, &aimbot);
+    Log("Render thread started");
 
-    // Main loop - just pump messages
+    Log("Step 10: Entering main loop");
     while (running) {
         MSG msg;
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -442,6 +520,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
+    Log("Shutting down...");
     renderThread.join();
+    Log("Done.");
+    g_log.close();
     return 0;
 }
