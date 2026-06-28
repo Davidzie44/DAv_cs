@@ -228,15 +228,7 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
 
         try {
 
-        MSG msg;
-        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) { running = false; break; }
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
-        if (!running) break;
-
-        // INSERT key toggle
+        // INSERT key toggle (main thread pumps messages, render thread reads keys)
         bool curInsert = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
         if (curInsert && !prevInsert) {
             menuOpen = !menuOpen;
@@ -287,7 +279,7 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
         }
 
         if (frameCount <= 3 || frameCount % 300 == 0) {
-            LogFmt("  Frame %d: calling ImGui new frame", frameCount);
+            LogFmt("  Frame %d: ImGui new frame + draw", frameCount);
         }
 
         // ImGui new frame
@@ -405,12 +397,18 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
         aimbot->SetSettings(aimSettings);
 
         // Render
+        if (frameCount <= 3 || frameCount % 300 == 0) {
+            LogFmt("  Frame %d: ImGui::Render + Present", frameCount);
+        }
         ImGui::Render();
         const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
         context->OMSetRenderTargets(1, &rtv, nullptr);
         context->ClearRenderTargetView(rtv, clearColor);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         swapChain->Present(1, 0);
+        if (frameCount <= 3 || frameCount % 300 == 0) {
+            LogFmt("  Frame %d: Present OK, frame done", frameCount);
+        }
 
         } catch (const std::exception& e) {
             LogFmt("C++ EXCEPTION in render loop: %s", e.what());
