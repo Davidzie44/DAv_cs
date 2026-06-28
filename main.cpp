@@ -133,7 +133,7 @@ float aimbotSmoothing = 1.0f;
 float aimbotFOV = 30.0f;
 float aimbotRCS = 2.0f;
 int aimbotBone = 0;
-bool aimbotVisibilityCheck = false;
+bool aimbotVisibilityCheck = true;
 bool aimbotTargetLock = true;
 int aimKey = VK_RBUTTON;
 
@@ -220,6 +220,49 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
     Log("RenderThread: ImGui initialized OK");
 
     g_cs2ProcessId = cs2ProcessId;
+
+    // Neon UI Style
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 8.0f;
+    style.FrameRounding = 4.0f;
+    style.GrabRounding = 4.0f;
+    style.TabRounding = 4.0f;
+    style.WindowBorderSize = 1.0f;
+    style.FrameBorderSize = 0.0f;
+    style.WindowPadding = ImVec2(12, 12);
+    style.FramePadding = ImVec2(8, 4);
+    style.ItemSpacing = ImVec2(8, 6);
+
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_WindowBg]        = ImVec4(0.05f, 0.05f, 0.08f, 0.95f);
+    colors[ImGuiCol_ChildBg]         = ImVec4(0.06f, 0.06f, 0.10f, 0.90f);
+    colors[ImGuiCol_PopupBg]         = ImVec4(0.06f, 0.06f, 0.10f, 0.96f);
+    colors[ImGuiCol_Border]          = ImVec4(0.00f, 0.80f, 1.00f, 0.40f);
+    colors[ImGuiCol_FrameBg]         = ImVec4(0.10f, 0.10f, 0.16f, 1.00f);
+    colors[ImGuiCol_FrameBgHovered]  = ImVec4(0.15f, 0.15f, 0.22f, 1.00f);
+    colors[ImGuiCol_FrameBgActive]   = ImVec4(0.00f, 0.50f, 0.70f, 0.40f);
+    colors[ImGuiCol_TitleBg]         = ImVec4(0.04f, 0.04f, 0.07f, 1.00f);
+    colors[ImGuiCol_TitleBgActive]   = ImVec4(0.00f, 0.60f, 0.85f, 0.25f);
+    colors[ImGuiCol_TitleBgCollapsed]= ImVec4(0.04f, 0.04f, 0.07f, 0.60f);
+    colors[ImGuiCol_Tab]             = ImVec4(0.12f, 0.12f, 0.20f, 1.00f);
+    colors[ImGuiCol_TabHovered]      = ImVec4(0.00f, 0.70f, 1.00f, 0.50f);
+    colors[ImGuiCol_TabActive]       = ImVec4(0.00f, 0.60f, 0.90f, 0.45f);
+    colors[ImGuiCol_TabUnfocused]    = ImVec4(0.10f, 0.10f, 0.16f, 1.00f);
+    colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.00f, 0.50f, 0.70f, 0.35f);
+    colors[ImGuiCol_SliderGrab]      = ImVec4(0.00f, 0.85f, 1.00f, 0.90f);
+    colors[ImGuiCol_SliderGrabActive]= ImVec4(0.00f, 0.95f, 1.00f, 1.00f);
+    colors[ImGuiCol_Button]          = ImVec4(0.08f, 0.08f, 0.14f, 1.00f);
+    colors[ImGuiCol_ButtonHovered]   = ImVec4(0.00f, 0.70f, 1.00f, 0.45f);
+    colors[ImGuiCol_ButtonActive]    = ImVec4(0.00f, 0.85f, 1.00f, 0.65f);
+    colors[ImGuiCol_Header]          = ImVec4(0.10f, 0.10f, 0.18f, 1.00f);
+    colors[ImGuiCol_HeaderHovered]   = ImVec4(0.00f, 0.60f, 0.85f, 0.40f);
+    colors[ImGuiCol_HeaderActive]    = ImVec4(0.00f, 0.70f, 1.00f, 0.50f);
+    colors[ImGuiCol_Separator]       = ImVec4(0.00f, 0.70f, 1.00f, 0.25f);
+    colors[ImGuiCol_SeparatorHovered]= ImVec4(0.00f, 0.80f, 1.00f, 0.50f);
+    colors[ImGuiCol_SeparatorActive] = ImVec4(0.00f, 0.90f, 1.00f, 0.70f);
+    colors[ImGuiCol_Text]            = ImVec4(0.90f, 0.95f, 1.00f, 1.00f);
+    colors[ImGuiCol_TextDisabled]    = ImVec4(0.40f, 0.45f, 0.55f, 1.00f);
+    colors[ImGuiCol_CheckMark]       = ImVec4(0.00f, 0.95f, 1.00f, 1.00f);
 
     bool prevInsert = false;
     int frameCount = 0;
@@ -310,21 +353,13 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
         if (espEnabled) {
             ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 
-            if (aimbotEnabled) {
-                float centerX = overlayWidth / 2.0f;
-                float centerY = overlayHeight / 2.0f;
-                float fovRadius = std::tan(aimbotFOV * 3.14159f / 180.0f) * (overlayWidth / 2.0f);
-                if (fovRadius < 5.0f) fovRadius = 5.0f;
-                drawList->AddCircle(ImVec2(centerX, centerY), fovRadius, IM_COL32(255, 255, 255, 120), 64, 1.5f);
-            }
-
             if (localPlayer.isAlive) {
                 auto players = entityManager->GetAllPlayers();
                 for (const auto& player : players) {
                     if (player.team == localPlayer.team && !espShowTeammates) continue;
 
                     bool isEnemy = (player.team != localPlayer.team);
-                    ImU32 espColor = isEnemy ? IM_COL32(255, 50, 50, 255) : IM_COL32(50, 255, 50, 255);
+                    ImU32 espColor = isEnemy ? IM_COL32(0, 220, 255, 255) : IM_COL32(50, 255, 50, 255);
 
                     Vector3 screenHead, screenFoot;
                     bool footOk = worldToScreen->WorldToScreenPoint(player.position, screenFoot);
@@ -344,27 +379,27 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
                     float boxY = screenHead.y;
 
                     if (espBoxes) {
-                        drawList->AddRect(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH), espColor);
+                        drawList->AddRect(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH), espColor, 0.0f, 0, 1.5f);
                     }
 
                     if (espHealth) {
                         float hp = (float)player.health / 100.0f;
-                        ImU32 hpColor = hp > 0.5f ? IM_COL32(255, 255 * (1.0f - (hp - 0.5f) * 2.0f), 0, 255)
-                                                   : IM_COL32(255, 255 * hp * 2.0f, 0, 255);
-                        drawList->AddRectFilled(ImVec2(boxX - 5, boxY), ImVec2(boxX - 1, boxY + boxH), IM_COL32(0, 0, 0, 200));
+                        if (hp > 1.0f) hp = 1.0f;
+                        ImU32 hpColor = IM_COL32(0, (int)(255 * hp), (int)(128 * hp), 255);
+                        drawList->AddRectFilled(ImVec2(boxX - 5, boxY), ImVec2(boxX - 1, boxY + boxH), IM_COL32(0, 0, 0, 180));
                         drawList->AddRectFilled(ImVec2(boxX - 5, boxY + boxH * (1.0f - hp)), ImVec2(boxX - 1, boxY + boxH), hpColor);
                     }
 
                     if (espName && !player.name.empty()) {
                         ImVec2 textSize = ImGui::CalcTextSize(player.name.c_str());
-                        drawList->AddText(ImVec2(boxX + boxW / 2 - textSize.x / 2, boxY - textSize.y - 2), IM_COL32(255, 255, 255, 255), player.name.c_str());
+                        drawList->AddText(ImVec2(boxX + boxW / 2 - textSize.x / 2, boxY - textSize.y - 2), IM_COL32(0, 220, 255, 255), player.name.c_str());
                     }
 
                     if (espDistance) {
                         char distStr[32];
                         sprintf_s(distStr, "%.0fm", player.distance);
                         ImVec2 textSize = ImGui::CalcTextSize(distStr);
-                        drawList->AddText(ImVec2(boxX + boxW / 2 - textSize.x / 2, boxY + boxH + 2), IM_COL32(200, 200, 200, 255), distStr);
+                        drawList->AddText(ImVec2(boxX + boxW / 2 - textSize.x / 2, boxY + boxH + 2), IM_COL32(180, 180, 220, 255), distStr);
                     }
 
                     if (espSnaplines) {
@@ -373,18 +408,31 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
                     }
 
                     if (espHeadDot) {
-                        drawList->AddCircleFilled(ImVec2(screenHead.x, screenHead.y), 3.0f, IM_COL32(255, 0, 0, 255), 16);
+                        drawList->AddCircleFilled(ImVec2(screenHead.x, screenHead.y), 3.0f, IM_COL32(255, 0, 100, 255), 16);
                     }
                 }
             }
         }
 
+        // FOV circle - independent of ESP
+        if (aimbotEnabled) {
+            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+            float centerX = overlayWidth / 2.0f;
+            float centerY = overlayHeight / 2.0f;
+            float fovRadius = std::tan(aimbotFOV * 3.14159f / 180.0f) * (overlayWidth / 2.0f);
+            if (fovRadius < 5.0f) fovRadius = 5.0f;
+            drawList->AddCircle(ImVec2(centerX, centerY), fovRadius, IM_COL32(0, 255, 200, 80), 64, 1.5f);
+        }
+
         // --- Draw Menu ---
         if (menuOpen) {
-            ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Once);
+            ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Once);
             ImGui::SetNextWindowPos(ImVec2(50, 50), ImGuiCond_Once);
-            ImGui::Begin("CS2 Tool", nullptr,
-                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
+            ImGui::Begin("##CS2Tool", nullptr,
+                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar);
+
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "CS2 TOOL");
+            ImGui::Separator();
 
             if (ImGui::BeginTabBar("Tabs")) {
                 if (ImGui::BeginTabItem("ESP")) {
@@ -419,7 +467,7 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
             }
 
             ImGui::Separator();
-            ImGui::Text("Press INSERT to toggle menu");
+            ImGui::TextColored(ImVec4(0.4f, 0.45f, 0.55f, 1.0f), "INSERT to toggle menu");
             ImGui::Separator();
             if (ImGui::Button("Detach & Exit", ImVec2(-1, 0))) {
                 running = false;
