@@ -305,6 +305,12 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
             }
 
             const PlayerData& localPlayer = entityManager->GetLocalPlayer();
+            if (frameCount <= 3 || frameCount % 300 == 0) {
+                LogFmt("  ESP: local alive=%d team=%d hp=%d pos=(%.0f,%.0f,%.0f) players=%d",
+                    localPlayer.isAlive, localPlayer.team, localPlayer.health,
+                    localPlayer.position.x, localPlayer.position.y, localPlayer.position.z,
+                    (int)entityManager->GetAllPlayers().size());
+            }
             if (localPlayer.isAlive) {
                 auto players = entityManager->GetAllPlayers();
                 for (const auto& player : players) {
@@ -315,11 +321,19 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
                     ImU32 espColor = isEnemy ? IM_COL32(255, 50, 50, 255) : IM_COL32(50, 255, 50, 255);
 
                     Vector3 screenHead, screenFoot;
-                    bool headOk = worldToScreen->WorldToScreenPoint(player.headPosition, screenHead);
                     bool footOk = worldToScreen->WorldToScreenPoint(player.position, screenFoot);
-                    if (!headOk || !footOk) continue;
+                    if (!footOk) continue;
+
+                    // Estimate head position from foot + ~70 units up
+                    Vector3 estimatedHead(player.position.x, player.position.y, player.position.z + 70.0f);
+                    bool headOk = worldToScreen->WorldToScreenPoint(estimatedHead, screenHead);
+                    if (!headOk) {
+                        // Fallback: use foot position
+                        screenHead = screenFoot;
+                    }
 
                     float boxH = std::abs(screenHead.y - screenFoot.y) * 1.2f;
+                    if (boxH < 10.0f) boxH = 10.0f;
                     float boxW = boxH * 0.6f;
                     float boxX = screenHead.x - boxW / 2.0f;
                     float boxY = screenHead.y;
@@ -354,7 +368,7 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
                     }
 
                     if (espHeadDot) {
-                        drawList->AddCircleFilled(ImVec2(screenHead.x, screenHead.y), 3.0f, IM_COL32(255, 0, 0, 255), 16);
+                        drawList->AddCircleFilled(ImVec2(screenHead.x, screenHead.y), 4.0f, IM_COL32(255, 0, 0, 255), 16);
                     }
                 }
             }

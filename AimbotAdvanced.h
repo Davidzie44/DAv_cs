@@ -60,9 +60,9 @@ private:
         }
     }
     
-    // Write view angles to dwCSGOInput + 0x80 (the input layer)
+    // Write view angles to dwCSGOInput + 0x688 (the input layer)
     void WriteViewAngles(const ViewAngles& angles) const {
-        uintptr_t viewAnglesAddress = process.GetClientDllBase() + Offsets::client_dll::dwCSGOInput + 0x80;
+        uintptr_t viewAnglesAddress = process.GetClientDllBase() + Offsets::client_dll::dwCSGOInput + 0x688;
         
         try {
             process.WriteMemory<float>(viewAnglesAddress, angles.pitch);

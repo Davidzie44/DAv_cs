@@ -29,76 +29,38 @@ struct PlayerData {
 class EntityManager {
 private:
     ProcessMemory& process;
-    
-    // Cache of player data
     std::vector<PlayerData> players;
-    std::map<uint32_t, uintptr_t> handleToPawnMap;
-    
-    // Local player data
     PlayerData localPlayer;
-    
-    // Entity list pointer (GameEntitySystem)
-    uintptr_t gameEntitySystem;
-    
-    // Read entity from sparse array using bit-shift method
-    uintptr_t GetEntityFromSparseArray(uintptr_t entityListPtr, int index) {
+    uintptr_t entityListBase;
+    uintptr_t entityListEntry;
+    static constexpr uintptr_t ENTITY_LIST_ENTRY_SIZE = 0x70;
+
+    uintptr_t ResolveController(int index) {
+        if (entityListEntry == 0) return 0;
         try {
-            // Sparse array traversal: listEntry = entityListPtr + 0x40 + ((index >> 9) * 0x8)
-            uintptr_t listEntry = entityListPtr + 0x40 + ((index >> 9) * 0x8);
-            
-            // Read the list entry pointer
-            uintptr_t entryListPtr = process.ReadMemory<uintptr_t>(listEntry);
-            if (entryListPtr == 0) return 0;
-            
-            // Read entity pointer: entryListPtr + 0x8 + ((index & 0x1FF) * 0x78)
-            // Note: Some sources use 0x10 instead of 0x8, and 0x78 or 0x10 for stride
-            uintptr_t entityPtr = process.ReadMemory<uintptr_t>(
-                entryListPtr + 0x8 + ((index & 0x1FF) * 0x78)
+            return process.ReadMemory<uintptr_t>(
+                entityListEntry + ((uintptr_t)(index + 1)) * ENTITY_LIST_ENTRY_SIZE
             );
-            
-            return entityPtr;
-        } catch (...) {
-            return 0;
-        }
+        } catch (...) { return 0; }
     }
-    
-    // Alternative simple method (fallback)
-    uintptr_t GetEntitySimple(uintptr_t entityListPtr, int index) {
+
+    uintptr_t ResolvePawnFromHandle(uint32_t handle) {
+        if (handle == 0 || handle == 0xFFFFFFFF || entityListBase == 0) return 0;
         try {
-            uintptr_t entityPtr = process.ReadMemory<uintptr_t>(
-                entityListPtr + 0x40 + (index * 0x10) + 0x10
+            uint32_t index = handle & 0x7FFF;
+            uintptr_t listPage = process.ReadMemory<uintptr_t>(
+                entityListBase + 0x10 + 8 * ((uintptr_t)(index >> 9))
             );
-            return entityPtr;
-        } catch (...) {
-            return 0;
-        }
+            if (listPage == 0) return 0;
+            return process.ReadMemory<uintptr_t>(
+                listPage + ENTITY_LIST_ENTRY_SIZE * (uintptr_t)(index & 0x1FF)
+            );
+        } catch (...) { return 0; }
     }
-    
-    // Parse entity handle to get index and serial
-    void ParseEntityHandle(uint32_t handle, int& outIndex, int& outSerial) {
-        outIndex = handle & 0x1FF;
-        outSerial = (handle >> 11) & 0x1FFF;
-    }
-    
-    // Get pawn from handle
-    uintptr_t GetPawnFromHandle(uint32_t handle) {
-        int index, serial;
-        ParseEntityHandle(handle, index, serial);
-        
-        uintptr_t entityPtr = GetEntityFromSparseArray(gameEntitySystem, index);
-        if (entityPtr == 0) return 0;
-        
-        // Verify serial number matches
-        // Note: Serial verification depends on implementation
-        return entityPtr;
-    }
-    
-    // Read player name from controller
+
     std::string GetPlayerName(uintptr_t controllerAddr) {
         if (controllerAddr == 0) return "Unknown";
-        
         try {
-            // m_sSanitizedPlayerName at offset 0x778 (char[16] or similar)
             char nameBuffer[64];
             for (int i = 0; i < 63; i++) {
                 nameBuffer[i] = process.ReadMemory<char>(controllerAddr + Offsets::schema::m_sSanitizedPlayerName + i);
@@ -110,232 +72,169 @@ private:
             return "Unknown";
         }
     }
-    
-    // Read controller for a pawn
-    uintptr_t GetControllerForPawn(uintptr_t pawnAddr) {
-        if (pawnAddr == 0) return 0;
-        
+
+    Vector3 ReadPositionFromPawn(uint64_t pawnAddr) {
+        if (pawnAddr == 0) return Vector3();
         try {
-            // This requires iterating the entity list to find matching controller
-            // For now, return 0 - this would need full entity list iteration
-            return 0;
-        } catch (...) {
-            return 0;
-        }
+            uintptr_t sceneNode = process.ReadMemory<uintptr_t>(pawnAddr + Offsets::schema::m_pGameSceneNode);
+            if (sceneNode == 0) return Vector3();
+            float x = process.ReadMemory<float>(sceneNode + Offsets::schema::m_vecAbsOrigin);
+            float y = process.ReadMemory<float>(sceneNode + Offsets::schema::m_vecAbsOrigin + 0x4);
+            float z = process.ReadMemory<float>(sceneNode + Offsets::schema::m_vecAbsOrigin + 0x8);
+            return Vector3(x, y, z);
+        } catch (...) { return Vector3(); }
+    }
+
+    bool IsDormant(uint64_t pawnAddr) {
+        if (pawnAddr == 0) return true;
+        try {
+            uintptr_t sceneNode = process.ReadMemory<uintptr_t>(pawnAddr + Offsets::schema::m_pGameSceneNode);
+            if (sceneNode == 0) return true;
+            return process.ReadMemory<bool>(sceneNode + Offsets::schema::m_bDormant);
+        } catch (...) { return true; }
     }
 
 public:
-    EntityManager(ProcessMemory& pm) : process(pm), gameEntitySystem(0) {
-        // Initialize local player
+    EntityManager(ProcessMemory& pm) : process(pm), entityListBase(0), entityListEntry(0) {
         localPlayer = PlayerData{};
     }
-    
-    // Update entity list and cache player data
+
     void Update() {
         players.clear();
-        handleToPawnMap.clear();
-        
-        // Read GameEntitySystem pointer
-        gameEntitySystem = process.ReadMemory<uintptr_t>(
+
+        entityListBase = process.ReadMemory<uintptr_t>(
             process.GetClientDllBase() + Offsets::client_dll::dwEntityList
         );
-        
-        if (gameEntitySystem == 0) return;
-        
-        // Read highest entity index
-        int highestIndex = process.ReadMemory<int>(
-            gameEntitySystem + Offsets::client_dll::dwGameEntitySystem_highestEntityIndex
-        );
-        
-        // Read local player pawn
+        if (entityListBase == 0) return;
+
+        entityListEntry = process.ReadMemory<uintptr_t>(entityListBase + 0x10);
+        if (entityListEntry == 0) return;
+
         uintptr_t localPawnAddr = process.ReadMemory<uintptr_t>(
             process.GetClientDllBase() + Offsets::client_dll::dwLocalPlayerPawn
         );
-        
-        // Read local player controller
         uintptr_t localControllerAddr = process.ReadMemory<uintptr_t>(
             process.GetClientDllBase() + Offsets::client_dll::dwLocalPlayerController
         );
-        
-        // Cache local player data
+
         if (localPawnAddr != 0) {
             Entity localPawn(process, localPawnAddr);
-            localPlayer.index = -1; // Local player
+            localPlayer.index = -1;
             localPlayer.health = localPawn.GetHealth();
             localPlayer.team = localPawn.GetTeam();
             localPlayer.armor = localPawn.GetArmor();
-            localPlayer.position = localPawn.GetPosition();
+            localPlayer.position = ReadPositionFromPawn(localPawnAddr);
             localPlayer.headPosition = localPawn.GetHeadPosition();
-            localPlayer.isAlive = localPawn.IsAlive();
-            localPlayer.isDormant = localPawn.IsDormant();
+            localPlayer.isAlive = localPawn.GetHealth() > 0;
+            localPlayer.isDormant = IsDormant(localPawnAddr);
             localPlayer.pawnAddr = localPawnAddr;
             localPlayer.controllerAddr = localControllerAddr;
-            localPlayer.entityIndex = localPawn.GetEntityIndex();
+            localPlayer.entityIndex = -1;
             localPlayer.flashAlpha = localPawn.GetFlashAlpha();
             localPlayer.name = "Local Player";
-            
             if (localControllerAddr != 0) {
                 localPlayer.name = GetPlayerName(localControllerAddr);
             }
         }
-        
-        // Iterate through all entities
-        for (int i = 0; i <= highestIndex && i < 1024; i++) {
-            // Try sparse array method first
-            uintptr_t entityPtr = GetEntityFromSparseArray(gameEntitySystem, i);
-            
-            // Fallback to simple method if sparse fails
-            if (entityPtr == 0) {
-                entityPtr = GetEntitySimple(gameEntitySystem, i);
-            }
-            
-            if (entityPtr == 0) continue;
-            
-            // Create entity object
-            Entity entity(process, entityPtr);
-            
-            // Read basic data
-            int health = entity.GetHealth();
-            int team = entity.GetTeam();
-            bool dormant = entity.IsDormant();
-            int lifeState = entity.GetLifeState();
-            
-            // Skip invalid entities
-            if (health <= 0) continue;
-            if (dormant) continue;
-            if (lifeState != 0) continue;
-            
-            // Read position
-            Vector3 position = entity.GetPosition();
-            if (position.Length() < 0.1f) continue; // Invalid position
-            
-            // Read head position from bone matrix
-            Vector3 headPosition = entity.GetHeadPosition();
-            
-            // Try to find associated controller for name
-            uintptr_t controllerAddr = GetControllerForPawn(entityPtr);
-            std::string name = GetPlayerName(controllerAddr);
-            
-            // Calculate distance from local player
+
+        for (int i = 0; i < 64; i++) {
+            uintptr_t controller = ResolveController(i);
+            if (controller == 0) continue;
+
+            uint32_t pawnHandle = process.ReadMemory<uint32_t>(controller + Offsets::schema::m_hPlayerPawn);
+            if (pawnHandle == 0 || pawnHandle == 0xFFFFFFFF) continue;
+
+            uintptr_t pawn = ResolvePawnFromHandle(pawnHandle);
+            if (pawn == 0) continue;
+
+            if (pawn == localPawnAddr) continue;
+
+            int health = 0;
+            int team = 0;
+            try {
+                health = process.ReadMemory<int>(pawn + Offsets::schema::m_iHealth);
+                team = process.ReadMemory<int>(pawn + Offsets::schema::m_iTeamNum);
+            } catch (...) { continue; }
+
+            if (health <= 0 || health > 200) continue;
+            if (team != 2 && team != 3) continue;
+
+            Vector3 position = ReadPositionFromPawn(pawn);
+            if (position.Length() < 1.0f) continue;
+
+            Entity pawnEntity(process, pawn);
+            Vector3 headPosition = pawnEntity.GetHeadPosition();
+            if (headPosition.Length() < 1.0f) headPosition = position;
+
             float distance = 0;
             if (localPlayer.pawnAddr != 0) {
                 distance = localPlayer.position.Distance(position);
             }
-            
-            // Create player data
+
             PlayerData data;
             data.index = i;
             data.health = health;
             data.team = team;
-            data.armor = entity.GetArmor();
+            data.armor = pawnEntity.GetArmor();
             data.position = position;
             data.headPosition = headPosition;
-            data.name = name;
+            data.name = GetPlayerName(controller);
             data.isAlive = true;
             data.isDormant = false;
             data.distance = distance;
-            data.pawnAddr = entityPtr;
-            data.controllerAddr = controllerAddr;
-            data.entityIndex = entity.GetEntityIndex();
-            data.flashAlpha = entity.GetFlashAlpha();
-            
-            // Read defusing state
+            data.pawnAddr = pawn;
+            data.controllerAddr = controller;
+            data.entityIndex = i;
+            data.flashAlpha = pawnEntity.GetFlashAlpha();
             try {
-                data.isDefusing = process.ReadMemory<bool>(
-                    entityPtr + Offsets::schema::m_bIsDefusing
-                );
+                data.isDefusing = process.ReadMemory<bool>(pawn + Offsets::schema::m_bIsDefusing);
             } catch (...) {
                 data.isDefusing = false;
             }
-            
+
             players.push_back(data);
         }
     }
-    
-    // Get local player pawn
+
     Entity GetLocalPawn() {
         uintptr_t localPawnAddr = process.ReadMemory<uintptr_t>(
             process.GetClientDllBase() + Offsets::client_dll::dwLocalPlayerPawn
         );
         return Entity(process, localPawnAddr);
     }
-    
-    // Get local player data
-    const PlayerData& GetLocalPlayer() const {
-        return localPlayer;
-    }
-    
-    // Get all valid targets (alive, non-dormant enemies)
+
+    const PlayerData& GetLocalPlayer() const { return localPlayer; }
+
     std::vector<PlayerData> GetValidTargets() {
         std::vector<PlayerData> targets;
-        
         int localTeam = localPlayer.team;
-        
         for (const auto& player : players) {
-            // Skip teammates
             if (player.team == localTeam) continue;
-            
-            // Skip invalid
-            if (!player.isAlive) continue;
-            if (player.isDormant) continue;
-            
+            if (!player.isAlive || player.isDormant) continue;
             targets.push_back(player);
         }
-        
         return targets;
     }
-    
-    // Get all players (including teammates)
-    std::vector<PlayerData> GetAllPlayers() {
-        return players;
-    }
-    
-    // Get players by team
+
+    std::vector<PlayerData> GetAllPlayers() { return players; }
+
     std::vector<PlayerData> GetPlayersByTeam(int teamNum) {
         std::vector<PlayerData> teamPlayers;
-        
         for (const auto& player : players) {
-            if (player.team == teamNum) {
-                teamPlayers.push_back(player);
-            }
+            if (player.team == teamNum) teamPlayers.push_back(player);
         }
-        
         return teamPlayers;
     }
-    
-    // Get player by entity index
+
     PlayerData* GetPlayerByIndex(int index) {
         for (auto& player : players) {
-            if (player.index == index) {
-                return &player;
-            }
+            if (player.index == index) return &player;
         }
         return nullptr;
     }
-    
-    // Get player by entity index (from m_iIDEntIndex)
-    PlayerData* GetPlayerByEntityIndex(int entityIndex) {
-        for (auto& player : players) {
-            if (player.entityIndex == entityIndex) {
-                return &player;
-            }
-        }
-        return nullptr;
-    }
-    
-    // Sort players by distance
+
     void SortByDistance() {
-        std::sort(players.begin(), players.end(), 
-            [](const PlayerData& a, const PlayerData& b) {
-                return a.distance < b.distance;
-            });
-    }
-    
-    // Sort players by health
-    void SortByHealth() {
         std::sort(players.begin(), players.end(),
-            [](const PlayerData& a, const PlayerData& b) {
-                return a.health < b.health;
-            });
+            [](const PlayerData& a, const PlayerData& b) { return a.distance < b.distance; });
     }
 };

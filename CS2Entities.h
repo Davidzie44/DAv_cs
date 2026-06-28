@@ -131,7 +131,9 @@ public:
     bool IsDormant() const {
         if (!IsValid()) return true;
         try {
-            return process.ReadMemory<bool>(address + m_bDormant);
+            uintptr_t sceneNode = process.ReadMemory<uintptr_t>(address + m_pGameSceneNode);
+            if (sceneNode == 0) return true;
+            return process.ReadMemory<bool>(sceneNode + m_bDormant);
         } catch (...) {
             return true;
         }
@@ -140,9 +142,11 @@ public:
     Vector3 GetPosition() const {
         if (!IsValid()) return Vector3();
         try {
-            float x = process.ReadMemory<float>(address + m_vecOrigin);
-            float y = process.ReadMemory<float>(address + m_vecOrigin + 0x4);
-            float z = process.ReadMemory<float>(address + m_vecOrigin + 0x8);
+            uintptr_t sceneNode = process.ReadMemory<uintptr_t>(address + m_pGameSceneNode);
+            if (sceneNode == 0) return Vector3();
+            float x = process.ReadMemory<float>(sceneNode + Offsets::schema::m_vecAbsOrigin);
+            float y = process.ReadMemory<float>(sceneNode + Offsets::schema::m_vecAbsOrigin + 0x4);
+            float z = process.ReadMemory<float>(sceneNode + Offsets::schema::m_vecAbsOrigin + 0x8);
             return Vector3(x, y, z);
         } catch (...) {
             return Vector3();
