@@ -105,10 +105,10 @@ public:
     static constexpr uintptr_t m_lifeState = Offsets::schema::m_lifeState;
     static constexpr uintptr_t m_pGameSceneNode = Offsets::schema::m_pGameSceneNode;
     static constexpr uintptr_t m_iIDEntIndex = Offsets::schema::m_iIDEntIndex;
-    static constexpr uintptr_t m_aimPunchAngle = Offsets::schema::m_aimPunchAngle;
     static constexpr uintptr_t m_iShotsFired = Offsets::schema::m_iShotsFired;
     static constexpr uintptr_t m_flFlashOverlayAlpha = Offsets::schema::m_flFlashOverlayAlpha;
     static constexpr uintptr_t m_ArmorValue = Offsets::schema::m_ArmorValue;
+    static constexpr uintptr_t m_pAimPunchServices = Offsets::schema::m_pAimPunchServices;
 
     int GetHealth() const {
         if (!IsValid()) return 0;
@@ -217,8 +217,10 @@ public:
     Vector2 GetAimPunch() const {
         if (!IsValid()) return Vector2(0, 0);
         try {
-            float x = process.ReadMemory<float>(address + m_aimPunchAngle);
-            float y = process.ReadMemory<float>(address + m_aimPunchAngle + 0x4);
+            uintptr_t aimPunchSvc = process.ReadMemory<uintptr_t>(address + Offsets::schema::m_pAimPunchServices);
+            if (aimPunchSvc == 0) return Vector2(0, 0);
+            float x = process.ReadMemory<float>(aimPunchSvc + Offsets::schema::m_predictableBaseAngle);
+            float y = process.ReadMemory<float>(aimPunchSvc + Offsets::schema::m_predictableBaseAngle + 0x4);
             return Vector2(x, y);
         } catch (...) {
             return Vector2(0, 0);

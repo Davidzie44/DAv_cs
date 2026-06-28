@@ -137,8 +137,11 @@ private:
         Entity localPawn = entityManager.GetLocalPawn();
         if (!localPawn.IsValid()) return Vector2(0, 0);
         try {
-            float x = process.ReadMemory<float>(localPawn.GetAddress() + Offsets::schema::m_aimPunchAngle);
-            float y = process.ReadMemory<float>(localPawn.GetAddress() + Offsets::schema::m_aimPunchAngle + 0x4);
+            uintptr_t aimPunchSvc = process.ReadMemory<uintptr_t>(
+                localPawn.GetAddress() + Offsets::schema::m_pAimPunchServices);
+            if (aimPunchSvc == 0) return Vector2(0, 0);
+            float x = process.ReadMemory<float>(aimPunchSvc + Offsets::schema::m_predictableBaseAngle);
+            float y = process.ReadMemory<float>(aimPunchSvc + Offsets::schema::m_predictableBaseAngle + 0x4);
             return Vector2(x, y);
         } catch (...) { return Vector2(0, 0); }
     }

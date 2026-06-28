@@ -43,20 +43,19 @@ namespace Offsets {
         constexpr uintptr_t m_pGameSceneNode = 0x330;
         constexpr uintptr_t m_modelState = 0x150;
         constexpr uintptr_t m_boneArray = 0x80;
-        constexpr uintptr_t m_vecOrigin = 0x1390;
+        constexpr uintptr_t m_vecOrigin = 0x80;
         constexpr uintptr_t m_vecAbsOrigin = 0xC8;
         constexpr uintptr_t m_iIDEntIndex = 0x33FC;
         constexpr uintptr_t m_flFlashOverlayAlpha = 0x13F4;
-        constexpr uintptr_t m_aimPunchAngle = 0x23F0;
+        constexpr uintptr_t m_pAimPunchServices = 0x1490;
+        constexpr uintptr_t m_predictableBaseAngle = 0x50;
         constexpr uintptr_t m_iShotsFired = 0x1C64;
         constexpr uintptr_t m_hPlayerPawn = 0x90C;
         constexpr uintptr_t m_bPawnIsAlive = 0x914;
-        constexpr uintptr_t m_sSanitizedPlayerName = 0x6F4;
+        constexpr uintptr_t m_sSanitizedPlayerName = 0x860;
         constexpr uintptr_t m_iszPlayerName = 0x6F4;
         constexpr uintptr_t m_ArmorValue = 0x1C7C;
         constexpr uintptr_t m_bIsDefusing = 0x1C52;
-        constexpr uintptr_t m_bHasDefuser = 0x23E9;
-        constexpr uintptr_t m_vecLastClipCameraPos = 0x1604;
         constexpr uintptr_t m_angEyeAngles = 0x3320;
         constexpr uintptr_t m_fFlags = 0x3F8;
     }
