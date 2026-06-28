@@ -286,6 +286,18 @@ public:
         const PlayerData& localPlayer = entityManager.GetLocalPlayer();
         if (!localPlayer.isAlive) return;
 
+        // Shoot through walls: if aimbot has a locked target, fire immediately
+        if (settings.targetLock && hasTarget && currentTarget.isAlive && currentTarget.health > 0) {
+            bool isEnemy = (currentTarget.team != localPlayer.team);
+            if (isEnemy) {
+                SendMouseDown();
+                Sleep(16);
+                SendMouseUp();
+                return;
+            }
+        }
+
+        // Fallback: crosshair-based triggerbot
         try {
             Entity localPawn = entityManager.GetLocalPawn();
             if (!localPawn.IsValid()) return;
@@ -298,7 +310,7 @@ public:
 
             int hp = process.ReadMemory<int>(entityAddr + Offsets::schema::m_iHealth);
             int tm = process.ReadMemory<int>(entityAddr + Offsets::schema::m_iTeamNum);
-            if (hp <= 0 || hp > 200) return;
+            if (hp <= 0 || hp > 300) return;
             if (tm == localPlayer.team) return;
 
             SendMouseDown();

@@ -107,6 +107,9 @@ public:
         uintptr_t clientBase = process.GetClientDllBase();
         uintptr_t engineBase = process.GetEngine2DllBase();
 
+        static int logCounter = 0;
+        logCounter++;
+
         // Read build number for offset verification
         static bool loggedOffsets = false;
         if (!loggedOffsets) {
@@ -147,6 +150,18 @@ public:
         if (entityListBase == 0) {
             Log("EntityManager: entityListBase is 0!");
             return;
+        }
+
+        // Read highest entity index for dynamic scan range
+        int maxEntities = 128;
+        try {
+            maxEntities = process.ReadMemory<int>(entityListBase + Offsets::client_dll::dwGameEntitySystem_highestEntityIndex);
+            if (maxEntities < 64) maxEntities = 64;
+            if (maxEntities > 2048) maxEntities = 2048;
+        } catch (...) {}
+
+        if (logCounter <= 5 || logCounter % 300 == 0) {
+            LogFmt("EntityManager: maxEntities=%d elBase=0x%llX", maxEntities, (unsigned long long)entityListBase);
         }
 
         uintptr_t localControllerAddr = process.ReadMemory<uintptr_t>(
@@ -191,8 +206,6 @@ public:
             localPlayer.name = GetPlayerName(localControllerAddr);
         }
 
-        static int logCounter = 0;
-        logCounter++;
         if (logCounter <= 5 || logCounter % 300 == 0) {
             LogFmt("  EntityManager: localPawn=0x%llX ctrl=0x%llX hp=%d team=%d pos=(%.1f,%.1f,%.1f) elBase=0x%llX",
                 (unsigned long long)localPawnAddr, (unsigned long long)localControllerAddr,
@@ -203,7 +216,7 @@ public:
         int foundCount = 0;
         int validCount = 0;
         int failHandle = 0, failPawn = 0, failLocal = 0, failHealth = 0, failTeam = 0, failPos = 0, failRead = 0;
-        for (int i = 0; i < 64; i++) {
+        for (int i = 0; i < maxEntities; i++) {
             uintptr_t controller = ResolveController(i);
             if (controller == 0) continue;
             foundCount++;
@@ -217,14 +230,6 @@ public:
             uintptr_t pawn = ResolvePawnFromHandle(pawnHandle);
             if (pawn == 0) {
                 failPawn++;
-                if (logCounter <= 3) {
-                    uint32_t idx = pawnHandle & 0x7FFF;
-                    uintptr_t pageAddr = entityListBase + 0x10 + (uintptr_t)(idx >> 9) * 0x10;
-                    uintptr_t pageVal = 0;
-                    try { pageVal = process.ReadMemory<uintptr_t>(pageAddr); } catch (...) {}
-                    LogFmt("    PAWN_FAIL[%d]: handle=0x%08X idx=%u pageAddr=0x%llX pageVal=0x%llX",
-                        i, pawnHandle, idx, (unsigned long long)pageAddr, (unsigned long long)pageVal);
-                }
                 continue;
             }
             if (pawn == localPawnAddr) { failLocal++; continue; }
@@ -236,10 +241,13 @@ public:
                 tm = process.ReadMemory<int>(pawn + Offsets::schema::m_iTeamNum);
             } catch (...) { failRead++; continue; }
 
-            if (hp <= 0 || hp > 200) { failHealth++; continue; }
+            if (hp <= 0 || hp > 300) { failHealth++; continue; }
             if (tm != 2 && tm != 3) { failTeam++; continue; }
 
+            bool dormant = IsDormant(pawn);
+
             Vector3 position = ReadPositionFromPawn(pawn);
+            if (position.Length() < 1.0f) { failPos++; continue; }
 
             float distance = 0;
             if (localPlayer.position.Length() > 1.0f) {
@@ -250,12 +258,12 @@ public:
             data.index = i;
             data.health = hp;
             data.team = tm;
-            data.armor = 0;
+            data.armor = process.ReadMemory<int>(pawn + Offsets::schema::m_ArmorValue);
             data.position = position;
             data.headPosition = Vector3(position.x, position.y, position.z + 64.0f);
             data.name = GetPlayerName(controller);
-            data.isAlive = true;
-            data.isDormant = false;
+            data.isAlive = hp > 0;
+            data.isDormant = dormant;
             data.distance = distance;
             data.pawnAddr = pawn;
             data.controllerAddr = controller;
@@ -266,9 +274,9 @@ public:
             players.push_back(data);
             validCount++;
 
-            if (logCounter <= 5 || logCounter % 300 == 0) {
-                LogFmt("    Player[%d]: hp=%d team=%d pos=(%.0f,%.0f,%.0f) dist=%.0f name=%s",
-                    i, hp, tm, position.x, position.y, position.z, distance, data.name.c_str());
+            if (logCounter <= 3) {
+                LogFmt("    Player[%d]: hp=%d team=%d pos=(%.0f,%.0f,%.0f) dist=%.0f dormant=%d name=%s",
+                    i, hp, tm, position.x, position.y, position.z, distance, dormant, data.name.c_str());
             }
         }
 
