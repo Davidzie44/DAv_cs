@@ -47,9 +47,9 @@ private:
         return start + (end - start) / t;
     }
     
-    // Read current view angles from CInputPtrGlobal + 0x80
+    // Read current view angles from dwViewAngles
     ViewAngles ReadViewAngles() const {
-        uintptr_t viewAnglesAddress = process.GetClientDllBase() + Offsets::client_dll::dwCInputPtrGlobal + 0x80;
+        uintptr_t viewAnglesAddress = process.GetClientDllBase() + Offsets::client_dll::dwViewAngles;
         
         try {
             float pitch = process.ReadMemory<float>(viewAnglesAddress);
@@ -60,15 +60,14 @@ private:
         }
     }
     
-    // Write view angles to CInputPtrGlobal + 0x80
+    // Write view angles to dwCSGOInput + 0x80 (the input layer)
     void WriteViewAngles(const ViewAngles& angles) const {
-        uintptr_t viewAnglesAddress = process.GetClientDllBase() + Offsets::client_dll::dwCInputPtrGlobal + 0x80;
+        uintptr_t viewAnglesAddress = process.GetClientDllBase() + Offsets::client_dll::dwCSGOInput + 0x80;
         
         try {
             process.WriteMemory<float>(viewAnglesAddress, angles.pitch);
             process.WriteMemory<float>(viewAnglesAddress + 0x4, angles.yaw);
         } catch (...) {
-            // Failed to write angles
         }
     }
     

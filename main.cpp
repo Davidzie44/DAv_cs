@@ -410,6 +410,11 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
         aimSettings.targetLock = aimbotTargetLock;
         aimbot->SetSettings(aimSettings);
 
+        // Run aimbot when aim key is held
+        if (aimbotEnabled && (GetAsyncKeyState(aimKey) & 0x8000)) {
+            aimbot->Aim();
+        }
+
         // Render
         if (frameCount <= 3 || frameCount % 300 == 0) {
             LogFmt("  Frame %d: ImGui::Render + Present", frameCount);
