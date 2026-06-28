@@ -89,44 +89,34 @@ public:
     }
 
     bool WorldToScreenPoint(const Vector3& worldPos, Vector3& screenPos) const {
-        // Transform world position by view-projection matrix
-        // w = world.x * m[0][3] + world.y * m[1][3] + world.z * m[2][3] + m[3][3]
         float w = worldPos.x * viewMatrix.m[0][3] + 
                   worldPos.y * viewMatrix.m[1][3] + 
                   worldPos.z * viewMatrix.m[2][3] + 
                   viewMatrix.m[3][3];
 
-        // Check if point is behind the camera
-        if (w < 0.001f) {
+        if (w < 0.01f) {
             return false;
         }
 
-        // Calculate screen coordinates
-        // x = world.x * m[0][0] + world.y * m[1][0] + world.z * m[2][0] + m[3][0]
         float x = worldPos.x * viewMatrix.m[0][0] + 
                   worldPos.y * viewMatrix.m[1][0] + 
                   worldPos.z * viewMatrix.m[2][0] + 
                   viewMatrix.m[3][0];
 
-        // y = world.x * m[0][1] + world.y * m[1][1] + world.z * m[2][1] + m[3][1]
         float y = worldPos.x * viewMatrix.m[0][1] + 
                   worldPos.y * viewMatrix.m[1][1] + 
                   worldPos.z * viewMatrix.m[2][1] + 
                   viewMatrix.m[3][1];
 
-        // Perspective divide
         x /= w;
         y /= w;
 
-        // Convert to screen coordinates
-        // Screen center is (screenWidth/2, screenHeight/2)
         screenPos.x = (screenWidth / 2.0f) + (screenWidth / 2.0f) * x;
-        screenPos.y = (screenHeight / 2.0f) - (screenHeight / 2.0f) * y; // Flip Y for screen coords
-        screenPos.z = 0.0f;
+        screenPos.y = (screenHeight / 2.0f) - (screenHeight / 2.0f) * y;
+        screenPos.z = w;
 
-        // Check if point is on screen
-        return screenPos.x >= 0 && screenPos.x <= screenWidth &&
-               screenPos.y >= 0 && screenPos.y <= screenHeight;
+        return screenPos.x >= -500 && screenPos.x <= screenWidth + 500 &&
+               screenPos.y >= -500 && screenPos.y <= screenHeight + 500;
     }
 
     bool WorldToScreenPoint(const Vector3& worldPos, float& screenX, float& screenY) const {

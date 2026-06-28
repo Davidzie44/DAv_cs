@@ -28,7 +28,7 @@ struct PlayerData {
 
 class EntityManager {
 private:
-    ProcessMemory process;
+    ProcessMemory& process;
     std::vector<PlayerData> players;
     PlayerData localPlayer;
     uintptr_t entityListBase;
@@ -36,14 +36,8 @@ private:
     uintptr_t ResolveController(int index) {
         if (entityListBase == 0) return 0;
         try {
-            uint32_t pageIndex = index >> 9;
-            uint32_t pageOffset = index & 0x1FF;
-            uintptr_t listEntry = process.ReadMemory<uintptr_t>(
-                entityListBase + (uintptr_t)pageOffset * 0x10 + 0x10
-            );
-            if (listEntry == 0) return 0;
             return process.ReadMemory<uintptr_t>(
-                listEntry + (uintptr_t)pageIndex * 0x70
+                entityListBase + 0x10 + ((uintptr_t)(index + 1)) * 0x70
             );
         } catch (...) { return 0; }
     }
@@ -109,7 +103,7 @@ private:
         try {
             uintptr_t sceneNode = process.ReadMemory<uintptr_t>(pawnAddr + Offsets::schema::m_pGameSceneNode);
             if (sceneNode == 0) return true;
-            return process.ReadMemory<bool>(sceneNode + 0x100);
+            return process.ReadMemory<bool>(sceneNode + Offsets::schema::m_bDormant);
         } catch (...) { return true; }
     }
 

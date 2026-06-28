@@ -117,13 +117,13 @@ CS2WindowRect GetCS2ClientRect(HWND cs2Hwnd) {
 }
 
 // Settings
-bool espEnabled = true;
+bool espEnabled = false;
 bool espBoxes = true;
 bool espHealth = true;
 bool espName = true;
 bool espWeapon = true;
 bool espDistance = true;
-bool espSnaplines = false;
+bool espSnaplines = true;
 bool espHeadDot = true;
 bool espShowTeammates = false;
 
@@ -317,7 +317,7 @@ void RenderThread(HWND overlayWindow, DWORD cs2ProcessId,
                     localPlayer.position.x, localPlayer.position.y, localPlayer.position.z,
                     (int)entityManager->GetAllPlayers().size());
             }
-            if (localPlayer.isAlive && localPlayer.position.Length() > 1.0f) {
+            if (localPlayer.isAlive) {
                 auto players = entityManager->GetAllPlayers();
                 for (const auto& player : players) {
                     if (player.team == localPlayer.team && !espShowTeammates) continue;
